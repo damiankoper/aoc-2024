@@ -46,14 +46,20 @@ pub fn main() !void {
     while (positions_it.next()) |entry| {
         for (entry.value_ptr.items) |a| {
             for (entry.value_ptr.items) |b| {
-                if (!a.eq(b)) {
-                    const dir_x = @as(i32, @intCast(a.x)) - @as(i32, @intCast(b.x));
-                    const dir_y = @as(i32, @intCast(a.y)) - @as(i32, @intCast(b.y));
-                    const antinode_a_y = @as(i32, @intCast(a.y)) + dir_y;
-                    const antinode_a_x = @as(i32, @intCast(a.x)) + dir_x;
+                var antinode_y = @as(i32, @intCast(a.y));
+                var antinode_x = @as(i32, @intCast(a.x));
+                antinodes.items[@intCast(antinode_y)].items[@intCast(antinode_x)] = '#';
 
-                    if (antinode_a_x >= 0 and antinode_a_x < antinodes.items[0].items.len and antinode_a_y >= 0 and antinode_a_y < antinodes.items.len) {
-                        antinodes.items[@intCast(antinode_a_y)].items[@intCast(antinode_a_x)] = '#';
+                const dir_x = @as(i32, @intCast(a.x)) - @as(i32, @intCast(b.x));
+                const dir_y = @as(i32, @intCast(a.y)) - @as(i32, @intCast(b.y));
+                if (dir_x != 0 or dir_y != 0) {
+                    antinode_y += dir_y;
+                    antinode_x += dir_x;
+
+                    while (antinode_x >= 0 and antinode_x < antinodes.items[0].items.len and antinode_y >= 0 and antinode_y < antinodes.items.len) {
+                        antinodes.items[@intCast(antinode_y)].items[@intCast(antinode_x)] = '#';
+                        antinode_y += dir_y;
+                        antinode_x += dir_x;
                     }
                 }
             }
