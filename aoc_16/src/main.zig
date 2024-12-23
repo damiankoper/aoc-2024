@@ -6,17 +6,68 @@ const allocator = gpa.allocator();
 const Vector = struct {
     x: i64,
     y: i64,
+
+    pub fn create_i64(_x: i64, _y: i64) Vector {
+        return Vector{ .x = _x, .y = _y };
+    }
+
+    pub fn create_usize(_x: usize, _y: usize) Vector {
+        return Vector{ .x = @intCast(_x), .y = @intCast(_y) };
+    }
+
     fn eq(self: *const Vector, vector: Vector) bool {
         return self.x == vector.x and self.y == vector.y;
     }
     fn add(self: *const Vector, vector: Vector) Vector {
-        return Vector{ .x = self.x + vector.x, .y = self.y + vector.y };
+        return Vector.create_i64(self.x + vector.x, self.y + vector.y);
     }
     fn rotLeft(self: *const Vector) Vector {
-        return Vector{ .x = -self.y, .y = self.x };
+        return Vector.create_i64(self.y, -self.x);
     }
     fn rotRight(self: *const Vector) Vector {
-        return Vector{ .x = self.y, .y = -self.x };
+        return Vector.create_i64(-self.y, self.x);
+    }
+    fn reverse(self: *const Vector) Vector {
+        return Vector.create_i64(-self.x, -self.y);
+    }
+};
+
+const PathStep = struct {
+    step: Vector,
+    dir: Vector,
+
+    pub fn create(step: Vector, dir: Vector) PathStep {
+        return PathStep{ .step = step, .dir = dir };
+    }
+};
+
+const Path = struct {
+    score: i64,
+    steps: std.ArrayList(PathStep),
+
+    pub fn create(score: i64, path_step: PathStep, prev_path_steps: ?std.ArrayList(PathStep)) !Path {
+        var path_steps = std.ArrayList(PathStep).init(allocator);
+        if (prev_path_steps != null)
+            try path_steps.appendSlice(prev_path_steps.?.items);
+        try path_steps.append(path_step);
+
+        return Path{ .score = score, .steps = path_steps };
+    }
+
+    fn lastPathStep(self: *const Path) PathStep {
+        return self.steps.items[self.steps.items.len - 1];
+    }
+
+    fn lastStep(self: *const Path) Vector {
+        return self.steps.items[self.steps.items.len - 1].step;
+    }
+
+    fn lastDir(self: *const Path) Vector {
+        return self.steps.items[self.steps.items.len - 1].dir;
+    }
+
+    fn deinit(self: *const Path) void {
+        self.steps.deinit();
     }
 };
 
@@ -32,7 +83,6 @@ fn printNumMap(map: std.ArrayList([]i64)) void {
         for (line) |*i| {
             if (i.* == std.math.maxInt(i64)) i.* = 9999;
         }
-
         std.log.debug("{any}", .{line});
     }
     std.log.debug("\n", .{});
@@ -41,29 +91,10 @@ fn printNumMap(map: std.ArrayList([]i64)) void {
 fn findPos(map: *std.ArrayList([]u8), pos: u8) Vector {
     for (map.items, 0..) |line, _y| {
         for (line, 0..) |char, _x| {
-            if (char == pos) {
-                return Vector{ .x = @intCast(_x), .y = @intCast(_y) };
-            }
+            if (char == pos) return Vector.create_usize(_x, _y);
         }
     }
     unreachable;
-}
-
-fn calcScore(dirs: ?std.ArrayList(Vector)) i64 {
-    if (dirs == null) return std.math.maxInt(i64);
-    var score: i64 = 0;
-    var last_dir: ?Vector = null;
-    for (dirs.?.items) |dir| {
-        if (last_dir != null) {
-            if (last_dir.?.eq(dir)) {
-                score += 1;
-            } else {
-                score += 1001;
-            }
-        }
-        last_dir = dir;
-    }
-    return score;
 }
 
 fn cloneMap(visited_map: std.ArrayList([]u8)) !std.ArrayList([]u8) {
@@ -74,69 +105,55 @@ fn cloneMap(visited_map: std.ArrayList([]u8)) !std.ArrayList([]u8) {
     return result;
 }
 
-fn valueInArray(value: Vector, array: std.ArrayList(Vector)) bool {
-    for (array.items) |num| {
-        if (value.eq(num)) {
-            return true;
-        }
+fn vectorIn(vector: Vector, arr: std.ArrayList(Vector)) bool {
+    for (arr.items) |item| {
+        if (item.eq(vector)) return true;
     }
     return false;
 }
+var c: i64 = 0;
+fn getScore(
+    map: *std.ArrayList([]u8),
+    min_score_map: *std.AutoHashMap(PathStep, i64),
+    path_step: PathStep,
+    score: i64,
+    dir_changed: bool,
+) ?i64 {
+    const curr = map.items[@intCast(path_step.step.y)][@intCast(path_step.step.x)];
+    const curr_score = min_score_map.get(path_step);
 
-fn makeMove(map: *std.ArrayList([]u8), min_score_map: *std.ArrayList([]i64), from_map: *std.ArrayList(std.ArrayList(std.ArrayList(Vector))), pos: Vector, dir: Vector, from: ?Vector, score: i64) !i64 {
-    const current = map.items[@intCast(pos.y)][@intCast(pos.x)];
-    const current_score = min_score_map.items[@intCast(pos.y)][@intCast(pos.x)];
-
-    if (current != '#') {
-        if (score - 1001 <= current_score) {
-            min_score_map.items[@intCast(pos.y)][@intCast(pos.x)] = score;
-            if ((score) < current_score) {
-                from_map.items[@intCast(pos.y)].items[@intCast(pos.x)].clearAndFree();
-            }
-            if (from != null and !valueInArray(from.?, from_map.items[@intCast(pos.y)].items[@intCast(pos.x)])) {
-                try from_map.items[@intCast(pos.y)].items[@intCast(pos.x)].append(from.?);
-            }
-
-            const next_pos_straight = pos.add(dir);
-            _ = try makeMove(map, min_score_map, from_map, next_pos_straight, dir, pos, score + 1);
-
-            const right_dir = dir.rotRight();
-            const next_pos_right = pos.add(right_dir);
-            _ = try makeMove(map, min_score_map, from_map, next_pos_right, right_dir, pos, score + 1001);
-
-            const left_dir = dir.rotLeft();
-            const next_pos_left = pos.add(left_dir);
-            _ = try makeMove(map, min_score_map, from_map, next_pos_left, left_dir, pos, score + 1001);
-        }
+    if (curr == '#') {
+        return null;
+    } else {
+        var new_score: i64 = score + 1;
+        if (dir_changed) new_score += 1000;
+        if (curr_score == null or new_score <= curr_score.?) return new_score;
     }
 
-    return score;
+    return null;
 }
 
-var x: i64 = 0;
-// var x: u8 = 0;
-fn markWalls(walls_map: *std.ArrayList([]u8), from_map: *std.ArrayList(std.ArrayList(std.ArrayList(Vector))), end: Vector) void {
-    const from = from_map.items[@intCast(end.y)].items[@intCast(end.x)];
+fn setMinScore(
+    min_score_map: *std.AutoHashMap(PathStep, i64),
+    path_step: PathStep,
+    score: i64,
+) !void {
+    try min_score_map.put(path_step, score);
+}
 
-    if (walls_map.items[@intCast(end.y)][@intCast(end.x)] != '0') {
-        x += 1;
-        //std.log.debug("{d}", .{x});
-        walls_map.items[@intCast(end.y)][@intCast(end.x)] = '0';
+fn setVisited(
+    map: *std.ArrayList([]u8),
+    pos: Vector,
+) void {
+    if (map.items[@intCast(pos.y)][@intCast(pos.x)] == 'K') {
+        map.items[@intCast(pos.y)][@intCast(pos.x)] = 'O';
+    } else {
+        map.items[@intCast(pos.y)][@intCast(pos.x)] = 'K';
     }
-    // x = (x + 1) % 10;}
+}
 
-    // std.time.sleep(1 * std.time.ns_per_s / 8);
-    // printMap(walls_map.*);
-    // std.log.debug("{any} {any}", .{ end, from.items });
-    // if (from.items.len > 0)
-    //     from.clearAndFree();
-    //std.log.debug("{any}", .{from.items});
-
-    for (from.items) |vec| {
-        //std.time.sleep(1 * std.time.ns_per_s);
-        // printMap(walls_map.*);
-        markWalls(walls_map, from_map, vec);
-    }
+fn isWall(map: *std.ArrayList([]u8), pos: Vector) bool {
+    return map.items[@intCast(pos.y)][@intCast(pos.x)] == '#';
 }
 
 pub fn main() !void {
@@ -147,46 +164,96 @@ pub fn main() !void {
     var map = std.ArrayList([]u8).init(allocator);
     defer map.deinit();
 
-    var walls_map = std.ArrayList([]u8).init(allocator);
-    defer walls_map.deinit();
-
-    var from_map = std.ArrayList(std.ArrayList(std.ArrayList(Vector))).init(allocator);
-    defer from_map.deinit();
-
-    var min_score_map = std.ArrayList([]i64).init(allocator);
+    var min_score_map = std.AutoHashMap(PathStep, i64).init(allocator);
     defer min_score_map.deinit();
 
     var buff_it = std.mem.splitSequence(u8, buff, "\n");
     while (buff_it.next()) |line| {
         try map.append(try allocator.dupe(u8, line));
-        try walls_map.append(try allocator.dupe(u8, line));
 
         const min_score_line = try allocator.alloc(i64, line.len);
         for (min_score_line) |*item| item.* = std.math.maxInt(i64);
-        try min_score_map.append(min_score_line);
-
-        var line_from_map = std.ArrayList(std.ArrayList(Vector)).init(allocator);
-        for (line) |_| {
-            const char_from = std.ArrayList(Vector).init(allocator);
-            try line_from_map.append(char_from);
-        }
-        try from_map.append(line_from_map);
     }
 
     const start = findPos(&map, 'S');
     const end = findPos(&map, 'E');
-    _ = try makeMove(&map, &min_score_map, &from_map, start, Vector{ .x = 1, .y = 0 }, null, 0);
 
-    //printMap(walls_map);
+    var queue = std.ArrayList(Path).init(allocator);
+    var best_paths = std.ArrayList(Path).init(allocator);
+
+    const path_start = try Path.create(0, PathStep.create(start, Vector.create_i64(1, 0)), null);
+    try queue.append(path_start);
+
+    while (queue.items.len > 0) {
+        var newQueue = std.ArrayList(Path).init(allocator);
+        for (queue.items) |path_curr| {
+            const step = path_curr.lastStep();
+            const dir = path_curr.lastDir();
+            const score = path_curr.score;
+
+            if (@mod(c, 1000) == 0) {
+                c += 1;
+                std.log.debug("{?}", .{step});
+            }
+
+            if (step.eq(end)) {
+                if (best_paths.items.len > 0 and score < best_paths.items[0].score)
+                    best_paths.clearAndFree();
+
+                if (best_paths.items.len == 0 or score <= best_paths.items[0].score)
+                    try best_paths.append(path_curr);
+                continue;
+            }
+            defer path_curr.deinit();
+
+            if (isWall(&map, step)) continue;
+
+            const min_score = min_score_map.get(path_curr.lastPathStep());
+            if (min_score != null and score > min_score.?) continue;
+
+            try min_score_map.put(path_curr.lastPathStep(), score);
+
+            const step_straight = step.add(dir);
+            const step_straight_path_step = PathStep.create(step_straight, dir);
+            const path_next_straight = try Path.create(score + 1, step_straight_path_step, path_curr.steps);
+            try newQueue.append(path_next_straight);
+
+            const right_dir = dir.rotRight();
+            const step_right = step.add(right_dir);
+            const step_right_path_step = PathStep.create(step_right, right_dir);
+            const path_next_right = try Path.create(score + 1001, step_right_path_step, path_curr.steps);
+            try newQueue.append(path_next_right);
+
+            const left_dir = dir.rotLeft();
+            const step_left = step.add(left_dir);
+            const step_left_path_step = PathStep.create(step_left, left_dir);
+            const path_next_left = try Path.create(score + 1001, step_left_path_step, path_curr.steps);
+            try newQueue.append(path_next_left);
+
+            // std.log.debug("{?}", .{min_score_map.get(path_curr.lastPathStep())});
+            // setVisited(&map, step);
+            // printMap(map);
+            // std.time.sleep(std.time.ns_per_s / 32);
+        }
+        queue.clearAndFree();
+        queue = newQueue;
+    }
+
+    var view_tiles: i64 = 0;
+    for (best_paths.items) |path| {
+        for (path.steps.items) |step| {
+            setVisited(&map, step.step);
+        }
+    }
+
+    for (map.items) |line| {
+        for (line) |char| {
+            if (char == 'O')
+                view_tiles += 1;
+        }
+    }
+
+    std.log.debug("{?} {?}", .{ view_tiles, c });
     // printNumMap(min_score_map);
 
-    const end_score = min_score_map.items[@intCast(end.y)][@intCast(end.x)];
-    std.log.debug("{any}", .{end_score});
-
-    std.log.debug("{any}", .{from_map.items[13].items[1].items});
-
-    markWalls(&walls_map, &from_map, end);
-
-    //printMap(walls_map);
-    std.log.debug("{any}", .{x});
 }
